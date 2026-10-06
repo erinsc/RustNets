@@ -81,8 +81,17 @@ impl<T> SparseVec<T> {
                 Some((i, data))
             } else {
                 None
-            })
-            
+            })    
+    }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (usize, &mut T)> {
+        self.storage.iter_mut()
+            .enumerate()
+            .filter_map(|(i, entry)|
+            if let Entry::Full(data) = entry {
+                Some((i, data))
+            } else {
+                None
+            })    
     }
 }
 
@@ -91,6 +100,15 @@ impl<T> std::ops::Index<usize> for SparseVec<T> {
 
     fn index(&self, index: usize) -> &Self::Output {
         let out = &self.storage[index];
+        match out {
+            Entry::Full(data) => data,
+            Entry::Empty(_) => panic!()
+        }
+    }
+}
+impl<T> std::ops::IndexMut<usize> for SparseVec<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        let out = &mut self.storage[index];
         match out {
             Entry::Full(data) => data,
             Entry::Empty(_) => panic!()

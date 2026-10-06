@@ -7,6 +7,11 @@ pub struct Port {
     pub node: Nid,
     pub port: Pid
 }
+impl Port {
+    pub fn new(node: Nid, port: Pid) -> Port { Self {
+        node, port 
+    }}
+}
 
 impl Ord for Port {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -34,7 +39,7 @@ impl std::fmt::Display for Port {
 #[macro_export]
 macro_rules! port {
     ($node:expr, $port:expr) => {
-        $crate::Port { node: $node, port: $port }
+        $crate::Port::new($node, $port)
     };
 }
 
@@ -50,6 +55,14 @@ pub struct Node<T> {
     pub data: T,
     pub symbol: Sid,
     pub ports: Vec<Option<Port>>
+}
+impl<T> Node<T> {
+    pub fn active_ports(&self) -> impl Iterator<Item = (Pid, &Port)> {
+        self.ports
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| Some((i as Pid, o.as_ref()?)))
+    }
 }
 
 #[derive(Debug)]

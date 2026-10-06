@@ -102,7 +102,11 @@ pub struct Rule {
     pub actions: Vec<Action>
 }
 impl Rule {
-    pub fn new(left: BuildRuleNode, right: BuildRuleNode) -> Rule {
+    pub fn new(mut left: BuildRuleNode, mut right: BuildRuleNode) -> Rule {
+        if left.symbol > right.symbol {
+            (left, right) = (right, left);
+        }
+
         let mut builder = RuleBuilder::new();
 
         for arg in left.args {

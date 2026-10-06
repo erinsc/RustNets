@@ -1,17 +1,31 @@
+use std::collections::HashSet;
+use std::hash::Hash;
+
 use crate::sparsevec::SparseVec;
 use crate::{Nid, Sid, Port, Symbol, Node, NetError};
 use crate::{Rule, RuleBook, Action};
 
 #[derive(Debug)]
 pub struct InteractionNet<N, S> {
-    pub nodes: SparseVec<Node<N>>,
-    pub symbols: Vec<Symbol<S>>
+    nodes: SparseVec<Node<N>>,
+    symbols: Vec<Symbol<S>>,
+    principal_pairs: HashSet<(Nid, Nid)>
 }
 impl<N: Clone, S> InteractionNet<N, S> {
     pub fn new() -> InteractionNet<N, S> { Self {
         nodes: SparseVec::new(),
-        symbols: Vec::new()
+        symbols: Vec::new(),
+        principal_pairs: HashSet::new()
     }}
+    pub fn count(&self) -> usize {
+        self.nodes.count()
+    }
+    pub fn iter_nodes(&self) -> impl Iterator<Item = (Nid, &Node<N>)> {
+        self.nodes.iter().map(|(i, n)| (i as Nid, n))
+    }
+    pub fn iter_mut_nodes(&mut self) -> impl Iterator<Item = (Nid, &mut Node<N>)> {
+        self.nodes.iter_mut().map(|(i, n)| (i as Nid, n))
+    }
     pub fn register_symbol(&mut self, name: &str, arity: usize, data: S) -> Sid {
         let symbol = Symbol { data, label: name.to_owned(), arity };
         self.symbols.push(symbol);
@@ -30,6 +44,15 @@ impl<N: Clone, S> InteractionNet<N, S> {
     }
     pub fn get_node(&self, id: Nid) -> Option<&Node<N>> {
         self.nodes.get(id as usize)
+    }
+    pub fn get_node_unchecked(&self, id: Nid) -> &Node<N> {
+        &self.nodes[id as usize]
+    }
+    pub fn get_symbol(&self, id: Sid) -> Option<&Symbol<S>> {
+        self.symbols.get(id as usize)
+    }
+    pub fn get_symbol_unchecked(&self, id: Sid) -> &Symbol<S> {
+        &self.symbols[id as usize]
     }
     pub fn get_node_mut(&mut self, id: Nid) -> Option<&mut Node<N>> {
         self.nodes.get_mut(id as usize)
@@ -62,14 +85,17 @@ impl<N: Clone, S> InteractionNet<N, S> {
         self.try_set_port(right, left)
     }
 
-    pub fn interact(&mut self, left: Nid, right: Nid, rulebook: &RuleBook) -> Result<(), NetError> {
-        let left_symbol = self.get_node(left).ok_or(NetError::NodeMissing)?.symbol;
-        let right_symbol = self.get_node(right).ok_or(NetError::NodeMissing)?.symbol;
+    pub fn interact(&mut self, mut left: Nid, mut right: Nid, rulebook: &RuleBook) -> Result<(), NetError> {
+        let mut left_symbol = self.get_node(left).ok_or(NetError::NodeMissing)?.symbol;
+        let mut right_symbol = self.get_node(right).ok_or(NetError::NodeMissing)?.symbol;
+
+        if (left_symbol > right_symbol) {
+            (left_symbol, right_symbol) = (right_symbol, left_symbol);
+            (left, right) = (right, left);
+        }
 
         if let Some(rule) = rulebook.get_rule(left_symbol, right_symbol) {
             self.rule_interact(left, right, rule)
-        } else if let Some(rule) = rulebook.get_rule(right_symbol, left_symbol) {
-            self.rule_interact(right, left, rule)
         } else {
             Err(NetError::RuleMissing)
         }
@@ -134,16 +160,31 @@ impl<N: Clone, S> InteractionNet<N, S> {
 
         self.remove_node(left);
         self.remove_node(right);
+        if left < right {
+            self.principal_pairs.remove(&(left, right));
+        } else {
+            self.principal_pairs.remove(&(right, left));
+        }
+        
 
         Ok(())
     }
     fn add_new_node_to_stack(&mut self, sid: Sid, nid: Nid, port: Option<Port>, stack: &mut Vec<Option<Port>>) -> Result<(), NetError> {
         if let Some(port) = port {
-            self.link(Port { node: nid, port: 0}, port)?;
+            let new = Port::new(nid, 0);
+            self.link(new, port)?;
+
+            if port.port == 0 {
+                if port < new {
+                    self.principal_pairs.insert((port.node, new.node));
+                } else {
+                    self.principal_pairs.insert((new.node, port.node));
+                }
+            }
         }
         let arity = self.symbols[sid as usize].arity;
         let ports = (0..arity)
-            .map(|p| Some(Port { node: nid, port: p as u8 + 1}));
+            .map(|p| Some(Port::new(nid, p as u8 + 1)));
         stack.extend(ports);
         Ok(())
     }
