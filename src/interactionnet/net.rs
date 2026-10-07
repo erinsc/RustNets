@@ -187,7 +187,6 @@ impl<N: Clone, S> InteractionNet<N, S> {
         } else {
             self.principal_pairs.remove(&(right, left));
         }
-        
 
         Ok(())
     }

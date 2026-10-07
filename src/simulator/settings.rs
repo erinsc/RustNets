@@ -1,26 +1,43 @@
 use crate::interactionnet::{Nid, Pid};
-use raylib::{RaylibHandle, consts::PI, ffi::Color, prelude::Vector2};
+use raylib::{RaylibHandle, consts::PI, ffi::Color, prelude::Vector2, text::WeakFont};
 
-pub struct Settings {
+pub struct Ripple {
+    pub pos: Vector2,
+    pub vel: Vector2,
+    pub age: f32
+}
+impl Ripple {
+    pub fn new(pos: Vector2, vel: Vector2) -> Ripple { Self {
+        pos, vel, age: 0.0
+    }}
+}
+
+pub struct Environment {
     pub radius: f32,
     pub edge: f32,
 
     pub min_dist: f32,
-    pub cutoff: f32,
     pub force: f32,
 
     pub paused: bool,
     pub reducing: bool,
-    pub held: Option<Nid>
+    pub held: Option<Nid>,
+
+    pub font: WeakFont,
+    pub ripples: Vec<Ripple>
 }
-impl Settings {
-    pub fn default() -> Settings { Self {
-        radius: 12.0, edge: 4.0, min_dist: 48.0, cutoff: 48.0, force: 0.1,
-        paused: false, reducing: false, held: None
+impl Environment {
+    pub fn default(rl: &RaylibHandle) -> Environment { Self {
+        radius: 12.0,
+        edge: 4.0,
+        min_dist: 64.0,
+        force: 0.1,
+        paused: false, reducing: false, held: None, font: rl.get_font_default(),
+        ripples: Vec::new()
     }}
 }
 
-pub fn port_offset(port: Pid, count: Pid, angle: f32, s: &Settings) -> Vector2 {
+pub fn port_offset(port: Pid, count: Pid, angle: f32, s: &Environment) -> Vector2 {
     if port == 0 {
         Vector2::new(s.radius * 0.667, 0.0).rotate(angle)
     } else {
@@ -50,10 +67,11 @@ impl NodeData {
     }}
 }
 pub struct SymbolData {
-    pub color: Color
+    pub color: Color,
+    pub label: String
 }
 impl SymbolData {
-    pub fn new(color: Color) -> SymbolData { Self {
-        color
+    pub fn new(color: Color, label: &str) -> SymbolData { Self {
+        color, label: label.to_string()
     }}
 }

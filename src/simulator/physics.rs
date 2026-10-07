@@ -2,17 +2,17 @@ use std::collections::HashMap;
 
 use raylib::prelude::Vector2;
 use crate::{
-    interactionnet::{InteractionNet, NetError, Nid, Pid, Port, RuleBook}, simulator::{NodeData, Settings, SymbolData, settings::port_offset}
+    interactionnet::{InteractionNet, NetError, Nid, Pid, Port, RuleBook}, simulator::{Environment, NodeData, Ripple, SymbolData, settings::port_offset}
 };
 
-fn pos_to_cell(v: Vector2, s: &Settings) -> (i32, i32) {
-    ((v.x / s.cutoff).floor() as i32, (v.y / s.cutoff).floor() as i32)
+fn pos_to_cell(v: Vector2, s: &Environment) -> (i32, i32) {
+    ((v.x / s.min_dist).floor() as i32, (v.y / s.min_dist).floor() as i32)
 }
 
 fn cross_product(left: Vector2, right: Vector2) -> f32 {
     left.x * right.y - left.y * right.x
 }
-pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleBook, s: &Settings) -> Result<(), NetError> {
+pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleBook, s: &mut Environment) -> Result<(), NetError> {
     if !s.reducing {
         return Ok(());
     }
@@ -28,13 +28,18 @@ pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleB
         println!("{} < {}", len, s.radius * 2.0);
 
         if len < s.radius * 2.0 {
+            let vel = (left_node.data.vel + right_node.data.vel) * 0.5;
+            let pos = (left_node.data.pos + right_node.data.pos) * 0.5;
+            let ripple = Ripple::new(pos, vel);
+            s.ripples.push(ripple);
+
             net.interact(left, right, rulebook)?;
         }
     }
     Ok(())
 }
 
-pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &Settings, _dt: f32) {
+pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &mut Environment, _dt: f32) {
     let n = net.count();
     let mut forces: HashMap<Nid, Vector2> = HashMap::with_capacity(n);
     let mut torques: HashMap<Nid, f32> = HashMap::with_capacity(n);
@@ -46,31 +51,27 @@ pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &Settings, _dt: f
     if !s.paused {
         calculate_node_forces(net, s, &grid, &mut forces);
         calculate_edge_forces(net, s, &mut forces, &mut torques);
+    }
+    let density = if s.paused {0.9} else {0.99};
 
-        for (id, node) in net.iter_mut_nodes() {
-            let f = *forces.get(&id).unwrap_or(&Vector2::zero());
-            node.data.vel *= 0.99;
-            node.data.vel += f;
-            node.data.pos += node.data.vel;
+    for (id, node) in net.iter_mut_nodes() {
+        node.data.vel *= density;
+        node.data.vel += *forces.get(&id).unwrap_or(&Vector2::zero());
+        node.data.pos += node.data.vel;
             
-            node.data.angle_velocity *= 0.9;
-            node.data.angle_velocity += torques.get(&id).unwrap_or(&0.0); 
-            node.data.angle += node.data.angle_velocity;
-        }
-    } else {
-        for (_, node) in net.iter_mut_nodes() {
-            node.data.vel *= 0.9;
-            node.data.pos += node.data.vel;
-            
-            node.data.angle_velocity *= 0.9;
-            node.data.angle += node.data.angle_velocity;
-        }
+        node.data.angle_velocity *= 0.9;
+        node.data.angle_velocity += *torques.get(&id).unwrap_or(&0.0);
+        node.data.angle += node.data.angle_velocity;
+    }
+    for ripple in s.ripples.iter_mut() {
+        ripple.age += 0.01;
+        ripple.pos += ripple.vel;
     }
 }
 
 fn calculate_node_forces(
     net: &InteractionNet<NodeData, SymbolData>,
-    s: &Settings,
+    s: &Environment,
     grid: &HashMap<(i32, i32), Vec<Nid>>,
     forces: &mut HashMap<Nid, Vector2>
 ) {
@@ -88,17 +89,16 @@ fn calculate_node_forces(
                     let diff = left.pos - right.pos;
                     let len = diff.length();
                     
-                    if len > s.cutoff {
+                    if len > s.min_dist {
                         continue;
                     }
+                    let f = s.force * (1.0 - len / s.min_dist);
                     
                     let dir = if len > 1e-4 {
                         diff * (1.0/len)
                     } else { 
                         Vector2::one()
                     };
-                    
-                    let f = s.force * (1.0 - len / s.min_dist);
 
                     *forces.entry(id).or_default() += dir * f;
                     *forces.entry(jd).or_default() -= dir * f;
@@ -110,7 +110,7 @@ fn calculate_node_forces(
 
 fn calculate_edge_forces(
     net: &InteractionNet<NodeData, SymbolData>,
-    s: &Settings,
+    s: &Environment,
     forces: &mut HashMap<Nid, Vector2>,
     torques: &mut HashMap<Nid, f32>
 ) {
@@ -143,17 +143,19 @@ fn calculate_edge_forces(
             }
                     
             let dir = diff * (1.0/len);
-            let mut f = s.force / 8.0;
+            let mut f = s.force;
 
             if left_port.port == 0 && right_port.port == 0 && s.reducing {
-                f *= 4.0;
+                f /= 1.0;
+            } else {
+                f /= 4.0;
             }
 
             *forces.entry(left_port.node).or_default() -= dir * f;
             *forces.entry(right_port.node).or_default() += dir * f;
 
-            let left_t = cross_product(left, dir * f);
-            let right_t = cross_product(right, dir * f);
+            let left_t = cross_product(left, dir * f) * 0.25;
+            let right_t = cross_product(right, dir * f) * 0.25;
 
             *torques.entry(left_port.node).or_default() -= left_t;
             *torques.entry(right_port.node).or_default() += right_t;

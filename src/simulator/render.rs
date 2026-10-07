@@ -1,25 +1,12 @@
 use raylib::{prelude::*};
 use crate::{
-    interactionnet::{InteractionNet, Nid, Port}, simulator::{NodeData, Settings, SymbolData, port_offset}
+    interactionnet::{InteractionNet, Nid, Port}, simulator::{NodeData, Environment, SymbolData, port_offset}
 };
-
-pub fn update_camera(rl: &RaylibHandle, camera: &mut Camera2D) {
-    if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT) {
-        camera.target -= rl.get_mouse_delta() * (1.0/camera.zoom);
-    }
-    let wheel = rl.get_mouse_wheel_move();
-    if wheel != 0.0 {
-        let mouse = rl.get_mouse_position();
-        camera.target = rl.get_screen_to_world2D(mouse, *camera);
-        camera.offset = mouse;
-        camera.zoom = (camera.zoom * (1.0 + wheel * 0.1)).clamp(0.05, 20.0);
-    }
-}
 
 pub fn pick_node(
     net: &InteractionNet<NodeData, SymbolData>,
     pos: Vector2,
-    s: &Settings
+    s: &Environment
 ) -> Option<Nid> {
     net.iter_nodes()
         .filter_map(|(i, node)| ((node.data.pos - pos).length() < s.radius).then(|| i))
@@ -29,7 +16,7 @@ pub fn pick_node(
 pub fn draw_graph<D: RaylibDraw>(
     d: &mut D,
     net: &InteractionNet<NodeData, SymbolData>,
-    s: &Settings
+    s: &mut Environment
 ) {
     for (nid, left_node) in net.iter_nodes() {
         for (pid, right) in left_node.active_ports() {
@@ -83,13 +70,23 @@ pub fn draw_graph<D: RaylibDraw>(
             d.draw_poly(node.data.pos, 3, s.radius + s.edge*2.0, angle, edge);
             d.draw_poly(node.data.pos, 3, s.radius, angle, symbol.data.color);
         }
+        let text = symbol.data.label.as_ref();
+        let size = 14.0;
+        let spacing = size / 10.0;
+        let dim = s.font.measure_text(text, size, spacing);
+        d.draw_text_ex(&s.font, text, node.data.pos - dim * 0.5, size, spacing, Color::BLACK);
+    }
+    for ripple in s.ripples.iter() {
+        let radius = (1.0 - (ripple.age - 1.0) * (ripple.age - 1.0)) * s.radius*4.0;
+        d.draw_ring(ripple.pos, radius, radius + s.edge,
+            0.0, 360.0, 24, Color::BLACK.alpha(1.0 - ripple.age));
     }
 }
 
 pub fn draw_hud<D: RaylibDraw>(
     d: &mut D,
     net: &InteractionNet<NodeData, SymbolData>,
-    s: &Settings
+    s: &Environment
 ) {
     d.draw_fps(10, 10);
     d.draw_text(&format!("nodes: {}", net.count()), 10, 10 + 24, 20, Color::BLACK);
