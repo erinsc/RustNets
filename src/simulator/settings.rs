@@ -1,19 +1,31 @@
-use crate::interactionnet::Pid;
+use crate::interactionnet::{Nid, Pid};
 use raylib::{RaylibHandle, consts::PI, ffi::Color, prelude::Vector2};
 
+pub struct Settings {
+    pub radius: f32,
+    pub edge: f32,
 
-pub const RADIUS: f32 = 12.0;
-pub const MINDIST: f32 = RADIUS * 4.0;
-pub const CUTOFF: f32 = RADIUS * 4.0;
-pub const REPULSION: f32 = 0.05;
+    pub min_dist: f32,
+    pub cutoff: f32,
+    pub force: f32,
 
+    pub paused: bool,
+    pub reducing: bool,
+    pub held: Option<Nid>
+}
+impl Settings {
+    pub fn default() -> Settings { Self {
+        radius: 12.0, edge: 4.0, min_dist: 48.0, cutoff: 48.0, force: 0.1,
+        paused: false, reducing: false, held: None
+    }}
+}
 
-pub fn port_offset(port: Pid, count: Pid, angle: f32) -> Vector2 {
+pub fn port_offset(port: Pid, count: Pid, angle: f32, s: &Settings) -> Vector2 {
     if port == 0 {
-        Vector2::new(RADIUS * 0.667, 0.0).rotate(angle)
+        Vector2::new(s.radius * 0.667, 0.0).rotate(angle)
     } else {
-        let x = RADIUS * 2.0 * (port as f32 / count as f32) - RADIUS;
-        Vector2::new(-RADIUS/2.0, x * 1.5).rotate(angle)
+        let x = s.radius* 2.0 * (port as f32 / count as f32) - s.radius;
+        Vector2::new(-s.radius/2.0, x * 1.5).rotate(angle)
     }
 }
 

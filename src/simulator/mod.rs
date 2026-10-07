@@ -1,7 +1,7 @@
 mod physics;
 mod render;
-mod utils;
+mod settings;
 
-pub use utils::*;
+pub use settings::*;
 pub use render::*;
 pub use physics::*;

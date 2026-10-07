@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::hash::Hash;
 
 use crate::sparsevec::SparseVec;
 use crate::{Nid, Sid, Port, Symbol, Node, NetError};
@@ -19,6 +18,9 @@ impl<N: Clone, S> InteractionNet<N, S> {
     }}
     pub fn count(&self) -> usize {
         self.nodes.count()
+    }
+    pub fn get_principal_pairs(&self) -> impl Iterator<Item = &(Nid, Nid)> {
+        self.principal_pairs.iter()
     }
     pub fn iter_nodes(&self) -> impl Iterator<Item = (Nid, &Node<N>)> {
         self.nodes.iter().map(|(i, n)| (i as Nid, n))
@@ -48,6 +50,9 @@ impl<N: Clone, S> InteractionNet<N, S> {
     pub fn get_node_unchecked(&self, id: Nid) -> &Node<N> {
         &self.nodes[id as usize]
     }
+    pub fn get_node_mut_unchecked(&mut self, id: Nid) -> &mut Node<N> {
+        &mut self.nodes[id as usize]
+    }
     pub fn get_symbol(&self, id: Sid) -> Option<&Symbol<S>> {
         self.symbols.get(id as usize)
     }
@@ -73,23 +78,40 @@ impl<N: Clone, S> InteractionNet<N, S> {
         *port = value;
         Ok(())
     }
-    pub fn try_set_port(&mut self, key: Option<Port>, value: Option<Port>) -> Result<(), NetError> {
-        key.map_or(Ok(()), |key| self.set_port(key, value))
+    fn check_principal_port(&mut self, left: Port, right: Port) {
+        if left.port == 0 && right.port == 0 {
+            if left < right {
+                self.principal_pairs.insert((left.node, right.node));
+            } else {
+                self.principal_pairs.insert((right.node, left.node));
+            }
+        }
     }
     pub fn link(&mut self, left: Port, right: Port) -> Result<(), NetError> {
         self.set_port(left, Some(right))?;
-        self.set_port(right, Some(left))
+        self.set_port(right, Some(left))?;
+
+        self.check_principal_port(left, right);
+        Ok(())
     }
     pub fn try_link(&mut self, left: Option<Port>, right: Option<Port>) -> Result<(), NetError> {
-        self.try_set_port(left, right)?;
-        self.try_set_port(right, left)
+        if let Some(left) = left {
+            self.set_port(left, right)?;
+        }
+        if let Some(right) = right {
+            self.set_port(right, left)?;
+        }
+        if let (Some(left), Some(right)) = (left, right) {
+            self.check_principal_port(left, right);
+        }
+        Ok(())
     }
 
     pub fn interact(&mut self, mut left: Nid, mut right: Nid, rulebook: &RuleBook) -> Result<(), NetError> {
         let mut left_symbol = self.get_node(left).ok_or(NetError::NodeMissing)?.symbol;
         let mut right_symbol = self.get_node(right).ok_or(NetError::NodeMissing)?.symbol;
 
-        if (left_symbol > right_symbol) {
+        if left_symbol > right_symbol {
             (left_symbol, right_symbol) = (right_symbol, left_symbol);
             (left, right) = (right, left);
         }
@@ -173,14 +195,6 @@ impl<N: Clone, S> InteractionNet<N, S> {
         if let Some(port) = port {
             let new = Port::new(nid, 0);
             self.link(new, port)?;
-
-            if port.port == 0 {
-                if port < new {
-                    self.principal_pairs.insert((port.node, new.node));
-                } else {
-                    self.principal_pairs.insert((new.node, port.node));
-                }
-            }
         }
         let arity = self.symbols[sid as usize].arity;
         let ports = (0..arity)
