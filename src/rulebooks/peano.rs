@@ -11,7 +11,7 @@ pub fn create_peano() -> (InteractionNet<NodeData, SymbolData>, RuleBook) {
     let delta = net.register_symbol("Delta", 2, SymbolData::new(Color::RED, "d"));
     let epsilon = net.register_symbol("Epsln", 0, SymbolData::new(Color::CYAN, "e"));
     
-    let mut book = RuleBook::new();
+    let mut book = RuleBook::new("", "");
 
     book.register_rule(rule![
         [add, 0, 0],

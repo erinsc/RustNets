@@ -2,17 +2,18 @@ use std::collections::HashMap;
 
 use raylib::prelude::Vector2;
 use crate::{
-    interactionnet::{InteractionNet, NetError, Nid, Pid, Port, RuleBook}, simulator::{Environment, NodeData, Ripple, SymbolData, settings::port_offset}
+    interactionnet::{InteractionNet, NetError, Nid, RuleBook},
+    simulator::{Settings, NodeData, Ripple, SymbolData, link_offsets_unchecked}
 };
 
-fn pos_to_cell(v: Vector2, s: &Environment) -> (i32, i32) {
+fn pos_to_cell(v: Vector2, s: &Settings) -> (i32, i32) {
     ((v.x / s.min_dist).floor() as i32, (v.y / s.min_dist).floor() as i32)
 }
 
 fn cross_product(left: Vector2, right: Vector2) -> f32 {
     left.x * right.y - left.y * right.x
 }
-pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleBook, s: &mut Environment) -> Result<(), NetError> {
+pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleBook, s: &mut Settings) -> Result<(), NetError> {
     if !s.reducing {
         return Ok(());
     }
@@ -25,21 +26,23 @@ pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleB
 
         let len = (left_node.data.pos - right_node.data.pos).length();
         
-        println!("{} < {}", len, s.radius * 2.0);
-
-        if len < s.radius * 2.0 {
+        if len < s.min_reducting_dist {
             let vel = (left_node.data.vel + right_node.data.vel) * 0.5;
             let pos = (left_node.data.pos + right_node.data.pos) * 0.5;
             let ripple = Ripple::new(pos, vel);
             s.ripples.push(ripple);
 
-            net.interact(left, right, rulebook)?;
+            match net.interact(left, right, rulebook) {
+                Ok(()) => Ok(()),
+                Err(NetError::RuleMissing) => Ok(()),
+                Err(e) => Err(e)
+            }?;
         }
     }
     Ok(())
 }
 
-pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &mut Environment, _dt: f32) {
+pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &mut Settings, _dt: f32) {
     let n = net.count();
     let mut forces: HashMap<Nid, Vector2> = HashMap::with_capacity(n);
     let mut torques: HashMap<Nid, f32> = HashMap::with_capacity(n);
@@ -57,6 +60,7 @@ pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &mut Environment,
     for (id, node) in net.iter_mut_nodes() {
         node.data.vel *= density;
         node.data.vel += *forces.get(&id).unwrap_or(&Vector2::zero());
+        node.data.vel = node.data.vel.clamp_value(0.0, s.max_vel);
         node.data.pos += node.data.vel;
             
         node.data.angle_velocity *= 0.9;
@@ -71,7 +75,7 @@ pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &mut Environment,
 
 fn calculate_node_forces(
     net: &InteractionNet<NodeData, SymbolData>,
-    s: &Environment,
+    s: &Settings,
     grid: &HashMap<(i32, i32), Vec<Nid>>,
     forces: &mut HashMap<Nid, Vector2>
 ) {
@@ -110,55 +114,36 @@ fn calculate_node_forces(
 
 fn calculate_edge_forces(
     net: &InteractionNet<NodeData, SymbolData>,
-    s: &Environment,
+    s: &Settings,
     forces: &mut HashMap<Nid, Vector2>,
     torques: &mut HashMap<Nid, f32>
 ) {
-    for (nid, left_node) in net.iter_nodes() {
-        let lp_count = left_node.ports.len();
-        for (pid, right_port) in left_node.active_ports() {
-            if right_port.node >= nid { continue; }
+    for (left, right) in net.iter_links() {
+        let [a, _, _, d] = link_offsets_unchecked(left, right, net, s);
 
-            let left_port = Port::new(nid, pid as Pid);
-            let right_node = net.get_node_unchecked(right_port.node);
-
-            let left = port_offset(
-                left_port.port,
-                lp_count as Pid,
-                left_node.data.angle,
-                s
-            );
-            let right = port_offset(
-                right_port.port,
-                right_node.ports.len() as Pid,
-                right_node.data.angle,
-                s
-            );
-        
-            let diff = (left_node.data.pos + left) - (right_node.data.pos + right);
-            let len = diff.length();
+        let diff = a - d;
+        let len = diff.length();           
+        if len < 1e-4 { continue; }
                     
-            if len < 1e-4 {
-                continue;
-            }
-                    
-            let dir = diff * (1.0/len);
-            let mut f = s.force;
+        let dir = diff * (1.0/len);
+        let mut f = s.force;
 
-            if left_port.port == 0 && right_port.port == 0 && s.reducing {
-                f /= 1.0;
-            } else {
-                f /= 4.0;
-            }
-
-            *forces.entry(left_port.node).or_default() -= dir * f;
-            *forces.entry(right_port.node).or_default() += dir * f;
-
-            let left_t = cross_product(left, dir * f) * 0.25;
-            let right_t = cross_product(right, dir * f) * 0.25;
-
-            *torques.entry(left_port.node).or_default() -= left_t;
-            *torques.entry(right_port.node).or_default() += right_t;
+        if left.port == 0 && right.port == 0 && s.reducing {
+            f /= 1.0;
+        } else {
+            f /= 4.0;
         }
+
+        *forces.entry(left.node).or_default() -= dir * f;
+        *forces.entry(right.node).or_default() += dir * f;
+
+        let left_offset = net.get_node_unchecked(left.node).data.pos - a;
+        let right_offset = net.get_node_unchecked(right.node).data.pos - d;
+
+        let left_torque = cross_product(left_offset, dir * f) / 180.0;
+        let right_torque = cross_product(right_offset, dir * f) / 180.0;
+
+        *torques.entry(left.node).or_default() += left_torque;
+        *torques.entry(right.node).or_default() -= right_torque;
     }
 }

@@ -6,7 +6,7 @@ mod rulebooks;
 use interactionnet::*;
 use raylib::{prelude::*};
 
-use crate::{rulebooks::create_peano, simulator::{Environment}};
+use crate::{rulebooks::create_peano, simulator::{Settings}};
 
 fn main() -> Result<(), NetError> {
     let (mut net, book) = create_peano();
@@ -25,7 +25,7 @@ fn main() -> Result<(), NetError> {
         zoom: 1.0,
     };
 
-    let mut settings = Environment::default(&rl);
+    let mut settings = Settings::default(&rl);
 
     while !rl.window_should_close() {
         let mouse = rl.get_screen_to_world2D(rl.get_mouse_position(), camera);
@@ -38,10 +38,15 @@ fn main() -> Result<(), NetError> {
         }
         let wheel = rl.get_mouse_wheel_move();
         if wheel != 0.0 {
-            let mouse = rl.get_mouse_position();
-            camera.target = rl.get_screen_to_world2D(mouse, camera);
-            camera.offset = mouse;
-            camera.zoom = (camera.zoom * (1.0 + wheel * 0.1)).clamp(0.05, 20.0);
+            if let Some(held) = settings.held {
+                let node = net.get_node_mut_unchecked(held);
+                node.data.angle_velocity -= wheel / 16.0;
+            } else {
+                let mouse = rl.get_mouse_position();
+                camera.target = rl.get_screen_to_world2D(mouse, camera);
+                camera.offset = mouse;
+                camera.zoom = (camera.zoom * (1.0 + wheel * 0.1)).clamp(0.05, 20.0);
+            }
         }
         if rl.is_mouse_button_released(MouseButton::MOUSE_BUTTON_LEFT) {
             settings.held = None;
@@ -57,6 +62,7 @@ fn main() -> Result<(), NetError> {
             if let Some(node) = net.get_node_mut(n) {
                 let diff = mouse - node.data.pos;
                 node.data.vel = diff * 0.1;
+                node.data.pos += diff * 0.1;
             }
         }        
         

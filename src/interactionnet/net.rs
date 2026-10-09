@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::sparsevec::SparseVec;
-use crate::{Nid, Sid, Port, Symbol, Node, NetError};
+use crate::{Nid, Sid, Pid, Port, Symbol, Node, NetError};
 use crate::{Rule, RuleBook, Action};
 
 #[derive(Debug)]
@@ -27,6 +27,15 @@ impl<N: Clone, S> InteractionNet<N, S> {
     }
     pub fn iter_mut_nodes(&mut self) -> impl Iterator<Item = (Nid, &mut Node<N>)> {
         self.nodes.iter_mut().map(|(i, n)| (i as Nid, n))
+    }
+    pub fn iter_links(&self) -> impl Iterator<Item = (Port, Port)> {
+        self.nodes.iter().flat_map(|(nid, node)| {
+            node.ports.iter().enumerate().filter_map(move |(pid, &link)| {
+                let there = link?;
+                let here = Port::new(nid as Nid, pid as Pid);
+                (here < there).then_some((here, there))
+            })
+        })
     }
     pub fn register_symbol(&mut self, name: &str, arity: usize, data: S) -> Sid {
         let symbol = Symbol { data, label: name.to_owned(), arity };
@@ -95,14 +104,12 @@ impl<N: Clone, S> InteractionNet<N, S> {
         Ok(())
     }
     pub fn try_link(&mut self, left: Option<Port>, right: Option<Port>) -> Result<(), NetError> {
-        if let Some(left) = left {
-            self.set_port(left, right)?;
-        }
-        if let Some(right) = right {
-            self.set_port(right, left)?;
-        }
         if let (Some(left), Some(right)) = (left, right) {
-            self.check_principal_port(left, right);
+            self.link(left, right)?;
+        } else if let Some(left) = left {
+            self.set_port(left, right)?;
+        } else if let Some(right) = right {
+            self.set_port(right, left)?;
         }
         Ok(())
     }
@@ -232,7 +239,7 @@ mod tests {
         let z = net.register_symbol("Z", 0, ());
         let s = net.register_symbol("S", 1, ());
 
-        let mut book = RuleBook::new();
+        let mut book = RuleBook::new("Peano", "basic addition");
 
         let peano_zero = rule![
             [add, 0, 0],
@@ -279,7 +286,7 @@ mod tests {
         let delta = net.register_symbol("Delta", 2, ());
         let epsilon = net.register_symbol("Epsiln", 0, ());
 
-        let mut book = RuleBook::new();
+        let mut book = RuleBook::new("Lafont", "lafonts universal ruleset");
 
         book.register_rule(rule![
             [epsilon],

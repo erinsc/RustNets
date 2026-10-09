@@ -56,14 +56,6 @@ pub struct Node<T> {
     pub symbol: Sid,
     pub ports: Vec<Option<Port>>
 }
-impl<T> Node<T> {
-    pub fn active_ports(&self) -> impl Iterator<Item = (Pid, &Port)> {
-        self.ports
-            .iter()
-            .enumerate()
-            .filter_map(|(i, o)| Some((i as Pid, o.as_ref()?)))
-    }
-}
 
 #[derive(Debug)]
 pub enum NetError {

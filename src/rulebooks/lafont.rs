@@ -8,7 +8,7 @@ pub fn create_rules_lafont() -> (InteractionNet<NodeData, SymbolData>, RuleBook)
     let delta = net.register_symbol("Delta", 2, SymbolData::new(Color::RED, "d"));
     let gamma = net.register_symbol("Gamma", 2, SymbolData::new(Color::YELLOW, "g"));
 
-    let mut book = RuleBook::new();
+    let mut book = RuleBook::new("", "");
 
     book.register_rule(rule![
         [epsilon],

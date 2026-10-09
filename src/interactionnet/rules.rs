@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Sid, Pid};
+use crate::{Pid, Sid};
 
 #[macro_export]
 macro_rules! tree {
@@ -124,13 +124,16 @@ impl Rule {
     }
 }
 pub struct RuleBook {
+    name: String,
+    description: String, 
     rules: HashMap<(Sid, Sid), Rule>
 }
 impl RuleBook {
-    pub fn new() -> RuleBook { Self {
+    pub fn new(name: &str, description: &str) -> RuleBook { Self {
+        name: name.to_owned(),
+        description: description.to_owned(),
         rules: HashMap::new()
     }}
-    
     pub fn register_rule(&mut self, rule: Rule) {
         self.rules.insert((rule.left, rule.right), rule);
     }
