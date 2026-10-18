@@ -1,14 +1,17 @@
-mod sparsevec;
 mod interactionnet;
-mod simulator;
-mod rulebooks;
+//mod simulator;
+//mod rulebooks;
 
 use interactionnet::*;
 use raylib::{prelude::*};
 
-use crate::{rulebooks::create_peano, simulator::{Settings}};
+//use crate::{rulebooks::create_peano, simulator::{Settings}};
 
 fn main() -> Result<(), NetError> {
+
+    Ok(())
+}
+    /*
     let (mut net, book) = create_peano();
 
     let (mut rl, thread) = raylib::init()
@@ -78,5 +81,5 @@ fn main() -> Result<(), NetError> {
     }
 
     Ok(())
-}
+} */
 

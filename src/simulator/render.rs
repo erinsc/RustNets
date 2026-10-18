@@ -40,7 +40,7 @@ pub fn draw_graph<D: RaylibDraw>(
 
         let edge = if let Some(dragged) = s.held && dragged == nid { Color::BLUE } else { Color::BLACK };
         
-        let symbol = net.get_symbol_unchecked(node.symbol);
+        let symbol = net.get_symbol(node.symbol).unwrap();
         if symbol.arity == 0 {
             let rad = s.radius * 0.667;
             d.draw_circle_v(node.data.pos, rad * 2.0 / 3.0 + s.edge*1.6, edge);
