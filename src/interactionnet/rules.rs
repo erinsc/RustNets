@@ -57,16 +57,14 @@ impl<'a, T> RuleBuilder<'a, T> {
         actions: Vec::new(),
         stack_len: 0
     }}
-    fn root(&mut self, sid: Sid) -> Result<(), RuleError> {
-        let arity = self.symbols.get(sid as usize)
+    fn root(&mut self, sid: &Sid) -> Result<(), RuleError> {
+        let arity = self.symbols.get(*sid as usize)
             .ok_or(RuleError::SymbolUnknown)?.arity;
         self.stack_len = arity;
         Ok(())
     }
-    fn visit(&mut self, kids: Vec<RuleNode>, is_left: bool) -> Result<(), RuleError> {
+    fn visit(&mut self, kids: &Vec<RuleNode>, is_left: bool) -> Result<(), RuleError> {
         for node in kids {
-            println!("{node:?}");
-
             if self.stack_len == 0 {
                 return Err(RuleError::ArityViolated);
             }
@@ -76,24 +74,24 @@ impl<'a, T> RuleBuilder<'a, T> {
                         if let Some(time) = time {
                             self.actions.push(Action::LinkEnd(*time));
                             self.stack_len -= 1;
-                            self.ports.insert(pid, None);
+                            self.ports.insert(*pid, None);
                         } else {
                             return Err(RuleError::PortMismatch);
                         }
                     } else {
                         self.actions.push(Action::LinkStart());
                         self.stack_len -= 1;
-                        self.ports.insert(pid, Some(self.ports.len() as Pid));
+                        self.ports.insert(*pid, Some(self.ports.len() as Pid));
                     }
                 }
                 RuleNode::Symbol(sid, grandkids) => {
-                    let arity = self.symbols.get(sid as usize)
+                    let arity = self.symbols.get(*sid as usize)
                         .ok_or(RuleError::SymbolUnknown)?.arity;
 
                     self.stack_len += arity;
                     self.stack_len -= 1;
 
-                    self.actions.push(Action::AddCell(sid, is_left));
+                    self.actions.push(Action::AddCell(*sid, is_left));
                     self.visit(grandkids, is_left)?;
                 }
             }
@@ -131,6 +129,11 @@ impl<T> Rulebook<T> {
         self.symbols.get(id as usize)
     }
     pub fn add(&mut self, left: RuleNode, right: RuleNode) -> Result<(), RuleError> {
+        self.add_rule(&left, &right)?;
+        self.add_rule(&right, &left)?;
+        Ok(())
+    }
+    fn add_rule(&mut self, left: &RuleNode, right: &RuleNode) -> Result<(), RuleError> {
         let mut rb = RuleBuilder::new(&self.symbols);
 
         let (ls, ld) = match left {
@@ -147,12 +150,12 @@ impl<T> Rulebook<T> {
         rb.visit(rd, false)?;
 
         let rule = Rule {
-            left: ls,
-            right: rs,
+            left: *ls,
+            right: *rs,
             actions: rb.actions
         };
 
-        self.rules.insert((ls, rs), rule);
+        self.rules.insert((*ls, *rs), rule);
 
         Ok(())
     }

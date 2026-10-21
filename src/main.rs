@@ -1,85 +1,75 @@
 mod interactionnet;
-//mod simulator;
+mod simulator;
 //mod rulebooks;
 
 use interactionnet::*;
 use raylib::{prelude::*};
 
+use crate::simulator::{CellData, Settings, SymbolData};
+
 //use crate::{rulebooks::create_peano, simulator::{Settings}};
 
 fn main() -> Result<(), NetError> {
-
-    Ok(())
-}
-    /*
-    let (mut net, book) = create_peano();
-
     let (mut rl, thread) = raylib::init()
         .size(1820, 1080)
-        .title("Hello raylib from Rust")
+        .title("Rustnets")
+        .resizable()
         .build();
 
     rl.set_target_fps(60);
 
-    let mut camera = Camera2D {
-        offset: Vector2::new(500.0, 350.0),
-        target: Vector2::zero(),
-        rotation: 0.0,
-        zoom: 1.0,
-    };
+    let mut settings = Settings::default();
 
-    let mut settings = Settings::default(&rl);
+    let mut book = Rulebook::new("Lafont", "lafonts universal rules");
+    let gamma = book.add_symbol("Gamma", 2, SymbolData::new(Color::YELLOW, "g"));
+    let delta = book.add_symbol("Delta", 2, SymbolData::new(Color::RED, "d"));
+    let epsilon = book.add_symbol("Epsiln", 0, SymbolData::new(Color::CYAN, "e"));
+
+    book.add(rule![epsilon],
+                rule![epsilon]).unwrap();
+    book.add(rule![epsilon], 
+                rule![gamma, [epsilon], [epsilon]]).unwrap();
+    book.add(rule![epsilon], 
+                rule![delta, [epsilon], [epsilon]]).unwrap();
+    book.add(rule![gamma, 0, 1], 
+                rule![gamma, 1, 0]).unwrap();
+    book.add(rule![delta, 0, 1], 
+                rule![delta, 0, 1]).unwrap();
+    book.add(rule![gamma, [delta, 0, 1], [delta, 2, 3]], 
+                rule![delta, [gamma, 0, 2], [gamma, 1, 3]]).unwrap();
+
+    let mut net = Net::new(book);
+
+    net.insert(epsilon, CellData::new(Vector2::new(0.0, 0.0))).unwrap();
+    net.insert(epsilon, CellData::new(Vector2::new(0.0, 100.0))).unwrap();
+    net.insert(gamma, CellData::new(Vector2::new(100.0, 0.0))).unwrap();
+    net.insert(delta, CellData::new(Vector2::new(100.0, 100.0))).unwrap();
+
+    //net.link(Port::new(0, 0), Port::new(1, 0)).unwrap();
+
+    net.link(Port::new(0, 0), Port::new(2, 2)).unwrap();
+    net.link(Port::new(1, 0), Port::new(3, 1)).unwrap();
+    net.link(Port::new(2, 1), Port::new(3, 2)).unwrap();
+    net.link(Port::new(2, 0), Port::new(3, 0)).unwrap();
+
 
     while !rl.window_should_close() {
-        let mouse = rl.get_screen_to_world2D(rl.get_mouse_position(), camera);
+        simulator::process_input(&mut net, &mut rl, &mut settings);
+        simulator::step_net(&mut net, &mut settings);
         
-        if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
-            settings.held = simulator::pick_node(&net, mouse, &settings);
-        }
-        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) && settings.held.is_none() {
-            camera.target -= rl.get_mouse_delta() * (1.0/camera.zoom);
-        }
-        let wheel = rl.get_mouse_wheel_move();
-        if wheel != 0.0 {
-            if let Some(held) = settings.held {
-                let node = net.get_node_mut_unchecked(held);
-                node.data.angle_velocity -= wheel / 16.0;
-            } else {
-                let mouse = rl.get_mouse_position();
-                camera.target = rl.get_screen_to_world2D(mouse, camera);
-                camera.offset = mouse;
-                camera.zoom = (camera.zoom * (1.0 + wheel * 0.1)).clamp(0.05, 20.0);
-            }
-        }
-        if rl.is_mouse_button_released(MouseButton::MOUSE_BUTTON_LEFT) {
-            settings.held = None;
-        }
-        if rl.is_key_pressed(KeyboardKey::KEY_SPACE) {
-            settings.paused = !settings.paused;
-        }
-        if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
-            settings.reducing = !settings.reducing;
-        }
+        simulator::interact_net(&mut net, &mut settings)?;
 
-        if let Some(n) = settings.held {
-            if let Some(node) = net.get_node_mut(n) {
-                let diff = mouse - node.data.pos;
-                node.data.vel = diff * 0.1;
-                node.data.pos += diff * 0.1;
-            }
-        }        
-        
-        simulator::step(&mut net, &mut settings, 0.0);
-        simulator::interact(&mut net, &book, &mut settings)?;
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::RAYWHITE);
-        {
-            let mut d2 = d.begin_mode2D(camera);
-            simulator::draw_graph(&mut d2, &net, &mut settings);
+
+        { // Block to drop d2 automatically
+            let mut d2 = d.begin_mode2D(settings.camera);
+            simulator::draw_effects(&mut d2, &settings);
+            simulator::draw_links(&mut d2, &net, &settings);
+            simulator::draw_cells(&mut d2, &net, &settings);
         }
         simulator::draw_hud(&mut d, &net, &settings);
     }
 
     Ok(())
-} */
-
+}

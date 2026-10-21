@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::interactionnet::{Action, Rulebook};
+use crate::interactionnet::{Action, Rulebook, rules::Symbol};
 
 pub type Cid = usize;
 pub type Sid = u16;
@@ -8,8 +8,8 @@ pub type Pid = u8;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Port {
-    cell_id: Cid,
-    port_id: Pid
+    pub cell_id: Cid,
+    pub port_id: Pid
 }
 impl Port {
     pub fn new(cell_id: Cid, port_id: Pid) -> Port { Port {
@@ -88,6 +88,10 @@ impl<T> NetStore<T> {
         self.cells.get_mut(&cell_id)
     }
 
+    pub fn get_disjoint_mut<const N: usize>(&mut self, cell_ids: [&Cid; N]) -> [Option<&mut Cell<T>>; N] {
+        self.cells.get_disjoint_mut(cell_ids)
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (Cid, &Cell<T>)> {
         self.cells.iter().map(|(&id, cell)| (id, cell))
     }
@@ -110,6 +114,8 @@ impl<T> NetStore<T> {
         Ok(())
     }
     pub fn link(&mut self, left: Option<Port>, right: Option<Port>) -> Result<(), NetError> {
+        println!("{left:?} {right:?}");
+
         if let Some(left) = left {
             self.set_port(left, right)?;
         }
@@ -120,6 +126,8 @@ impl<T> NetStore<T> {
             if left.port_id == 0 && right.port_id == 0 {
                 if left < right {
                     self.main_links.insert((left.cell_id, right.cell_id));
+                } else {
+                    self.main_links.insert((right.cell_id, left.cell_id));
                 }
             }
         }
@@ -157,10 +165,30 @@ impl<C: Clone, S> Net<C, S> {
         net: NetStore::new(),
         rulebook
     }}
+    pub fn len(&self) -> usize {
+        self.net.len()
+    }
+
     pub fn insert(&mut self, symbol_id: Sid, data: C) -> Result<Cid, NetError> {
         let arity = self.rulebook.get_symbol(symbol_id)
             .ok_or(NetError::SymbolMissing(symbol_id))?.arity;
         Ok(self.net.insert(symbol_id, arity, data))
+    }
+
+    pub fn get(&self, cell_id: Cid) -> Option<&Cell<C>> {
+        self.net.get(cell_id)
+    }
+
+    pub fn get_mut(&mut self, cell_id: Cid) -> Option<&mut Cell<C>> {
+        self.net.get_mut(cell_id)
+    }
+
+    pub fn get_disjoint_mut<const N: usize>(&mut self, cell_ids: [&Cid; N]) -> [Option<&mut Cell<C>>; N] {
+        self.net.get_disjoint_mut(cell_ids)
+    }
+
+    pub fn get_symbol(&self, symbol_id: Sid) -> Option<&Symbol<S>> {
+        self.rulebook.get_symbol(symbol_id)
     }
 
     pub fn link(&mut self, left: Port, right: Port) -> Result<(), NetError> {
@@ -173,6 +201,19 @@ impl<C: Clone, S> Net<C, S> {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Cid, &mut Cell<C>)> {
         self.net.iter_mut()
+    }
+    pub fn iter_main_links(&self) -> impl Iterator<Item = &(Cid, Cid)> {
+        self.net.main_links.iter()
+    }
+
+    pub fn iter_links(&self) -> impl Iterator<Item = (Port, Port)> {
+        self.iter()
+            .flat_map(|(left_cell_id, left_cell)|
+            left_cell.ports.iter().enumerate().filter_map(move |(left_port_id, left_port)| {
+                let right_port = Port::new(left_cell_id, left_port_id as Pid);
+                left_port.filter(|&p| p < right_port).map(|p| (p, right_port))
+            })
+        )
     }
     pub fn follow(&self, key: Port) -> Option<Port> {
         self.net.follow(key)
@@ -188,7 +229,6 @@ impl<C: Clone, S> Net<C, S> {
             .ok_or(NetError::CellMissing(right_id))?.symbol_id;
 
         let rule = self.rulebook.get(ls_id, rs_id)
-            .or_else(|| self.rulebook.get(rs_id, ls_id))
             .ok_or(NetError::RuleMissing(ls_id, rs_id))?;
 
         let mut hard_pairs = Vec::new();
@@ -230,8 +270,6 @@ impl<C: Clone, S> Net<C, S> {
         for action in rule.actions.clone() {
             let port = stack.pop().unwrap();
 
-            println!("{action:?} {port:?}");
-            
             match action {
                 Action::AddCell(sid, left) => {
                     let data = if left { left_data.clone() } else { right_data.clone() };

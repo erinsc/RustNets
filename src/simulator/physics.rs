@@ -1,149 +1,159 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
-use raylib::prelude::Vector2;
-use crate::{
-    interactionnet::{InteractionNet, NetError, Nid, RuleBook},
-    simulator::{Settings, NodeData, Ripple, SymbolData, link_offsets_unchecked}
-};
+use raylib::{RaylibHandle, ffi::Vector2};
 
-fn pos_to_cell(v: Vector2, s: &Settings) -> (i32, i32) {
-    ((v.x / s.min_dist).floor() as i32, (v.y / s.min_dist).floor() as i32)
-}
+use crate::{interactionnet::{Cell, Cid, Net, NetError}, simulator::{Ripple, data::{CellData, Settings}, ports::port_offset}};
 
 fn cross_product(left: Vector2, right: Vector2) -> f32 {
     left.x * right.y - left.y * right.x
 }
-pub fn interact(net: &mut InteractionNet<NodeData, SymbolData>, rulebook: &RuleBook, s: &mut Settings) -> Result<(), NetError> {
-    if !s.reducing {
-        return Ok(());
+
+struct CollisionGrid {
+    grid: HashMap<(i32, i32), Vec<Cid>>,
+}
+impl CollisionGrid {
+    fn new<S>(grid_size: f32, net: &Net<CellData, S>) -> CollisionGrid { 
+        let mut grid = HashMap::<(i32, i32), Vec<Cid>>::new();
+
+        net.iter().for_each(|(cell_id, cell)| {
+            grid.entry(
+                CollisionGrid::pos_to_grid(grid_size, cell.data.pos)
+            ).or_default().push(cell_id);
+        });
+        CollisionGrid { grid: grid }
     }
 
-    let pairs: Vec<_> = net.get_principal_pairs().cloned().collect();
+    fn pos_to_grid(grid_size: f32, pos: Vector2) -> (i32, i32) {
+        ((pos.x / grid_size).floor() as i32, (pos.y / grid_size).floor() as i32)
+    }
+
+    // Iterate through all pairs of registered cells that are within neigbouring cells, or the same cell
+    // Each pair is only returned once, with no guarrantee of pair order, nor order within pairs
+    fn iter(&self) -> impl Iterator<Item = (Cid, Cid)> {
+        self.grid.iter().flat_map(move |(&(cx, cy), vec)| {
+
+            // Cells from the same grid square
+            // Only considers pairs where left_id < right_id
+
+            let same = vec.iter().enumerate().flat_map(move |(i, &left)| {
+                vec[i + 1..].iter().map(move |&right| (left, right))
+            });
+
+            // Cells from different squares
+            // Only consides squares down and to the left
+
+            let different = [(1, 0), (-1, 1), (0, 1), (1, 1)]
+                .into_iter()
+                .filter_map(move |(dx, dy)| self.grid.get(&(cx + dx, cy + dy)))
+                .flat_map(move |other|
+                    vec.iter().flat_map(move |&left|
+                        other.iter().map(move |&right| (left, right))
+                    )
+                )
+            ;
+
+            same.chain(different)
+        })
+    }
+}
+
+pub fn interact_net<S>(net: &mut Net<CellData, S>, settings: &mut Settings) -> Result<(), NetError> {
+    if !settings.reducing {
+        return Ok(());
+    }
     
-    for (left, right) in pairs {
-        let left_node = net.get_node_unchecked(left);
-        let right_node = net.get_node_unchecked(right);
+    let main_links: Vec<_> = net.iter_main_links().copied().collect();
 
-        let len = (left_node.data.pos - right_node.data.pos).length();
-        
-        if len < s.min_reducting_dist {
-            let vel = (left_node.data.vel + right_node.data.vel) * 0.5;
-            let pos = (left_node.data.pos + right_node.data.pos) * 0.5;
-            let ripple = Ripple::new(pos, vel);
-            s.ripples.push(ripple);
+    for (left_id, right_id) in main_links {
+        let [left, right] = net.get_disjoint_mut([&left_id, &right_id]);
+        let (Some(left), Some(right)) = (left, right) else { continue; };
 
-            match net.interact(left, right, rulebook) {
-                Ok(()) => Ok(()),
-                Err(NetError::RuleMissing) => Ok(()),
-                Err(e) => Err(e)
-            }?;
-        }
+        let difference = left.data.pos - right.data.pos;
+        let length = difference.length();
+        if length > settings.reduction_distance { continue; }
+
+        let velocity = (left.data.vel + right.data.vel) * 0.5; 
+        let position = (left.data.pos + right.data.pos) * 0.5;
+
+        let ripple = Ripple::new(position, velocity); 
+        settings.ripples.push(ripple);
+
+        let r = net.interact(left_id, right_id);
+        match r {
+            Ok(()) => Ok(()),
+            Err(NetError::RuleMissing(_, _)) => Ok(()),
+            Err(e) => Err(e)
+        }?;
     }
     Ok(())
 }
 
-pub fn step(net: &mut InteractionNet<NodeData, SymbolData>, s: &mut Settings, _dt: f32) {
-    let n = net.count();
-    let mut forces: HashMap<Nid, Vector2> = HashMap::with_capacity(n);
-    let mut torques: HashMap<Nid, f32> = HashMap::with_capacity(n);
-    let mut grid: HashMap<(i32, i32), Vec<Nid>> = HashMap::with_capacity(n);
+pub fn step_net<S>(net: &mut Net<CellData, S>, settings: &mut Settings) {
+    let grid = CollisionGrid::new(settings.min_dist, net);
     
-    for (i, node) in net.iter_nodes() {
-        grid.entry(pos_to_cell(node.data.pos, s)).or_default().push(i);
-    }
-    if !s.paused {
-        calculate_node_forces(net, s, &grid, &mut forces);
-        calculate_edge_forces(net, s, &mut forces, &mut torques);
-    }
-    let density = if s.paused {0.9} else {0.99};
+    // Push cells away from each other
+    for (left_id, right_id) in grid.iter() {
+        let [left, right] = net.get_disjoint_mut([&left_id, &right_id]);
+        let (Some(left), Some(right)) = (left, right) else { continue; };
 
-    for (id, node) in net.iter_mut_nodes() {
-        node.data.vel *= density;
-        node.data.vel += *forces.get(&id).unwrap_or(&Vector2::zero());
-        node.data.vel = node.data.vel.clamp_value(0.0, s.max_vel);
-        node.data.pos += node.data.vel;
-            
-        node.data.angle_velocity *= 0.9;
-        node.data.angle_velocity += *torques.get(&id).unwrap_or(&0.0);
-        node.data.angle += node.data.angle_velocity;
+        let difference = left.data.pos - right.data.pos;
+        let length = difference.length();            
+        if length > settings.min_dist || length < 1e-4 { continue; }
+        
+        let direction = difference * (1.0 / length);
+        let force = settings.force * (1.0 - length / settings.min_dist ) * 2.0;
+
+        left.data.vel += direction * force;
+        right.data.vel -= direction * force;
     }
-    for ripple in s.ripples.iter_mut() {
+
+    // Pull links together
+    for (left_port, right_port) in net.iter_links().collect::<Vec<_>>() {
+        let [left, right] = net.get_disjoint_mut([&left_port.cell_id, &right_port.cell_id]);
+        let (Some(left), Some(right)) = (left, right) else { continue; };
+
+        let left_offset = port_offset(left, left_port.port_id, settings);
+        let right_offset = port_offset(right, right_port.port_id, settings);
+
+        let difference = left.data.pos + left_offset - right_offset - right.data.pos;
+        let length = difference.length();       
+        if length < 1e-4 { continue; }
+        
+        let direction = difference * (1.0 / length);
+        let mut force = settings.force;
+
+        if left_port.port_id == 0 && right_port.port_id == 0 && settings.reducing {
+            force *= 4.0;
+        }
+
+        let push = direction * force;
+
+        left.data.vel -= push;
+        right.data.vel += push;
+
+        left.data.spin -= cross_product(left_offset, push) / 180.0;
+        right.data.spin += cross_product(right_offset, push) / 180.0;
+    }
+    for (_, cell) in net.iter_mut() {
+        cell.data.vel *= 0.95;
+        //cell.data.vel = cell.data.vel.clamp_value(0.0, settings.max_vel);
+        cell.data.pos += cell.data.vel;
+
+        cell.data.spin *= 0.9;
+        cell.data.angle += cell.data.spin;
+    }
+    for ripple in settings.ripples.iter_mut() {
         ripple.age += 0.01;
         ripple.pos += ripple.vel;
     }
 }
 
-fn calculate_node_forces(
-    net: &InteractionNet<NodeData, SymbolData>,
-    s: &Settings,
-    grid: &HashMap<(i32, i32), Vec<Nid>>,
-    forces: &mut HashMap<Nid, Vector2>
-) {
-    for (id, node) in net.iter_nodes() {
-        let left = node.data;
+pub fn jitter_net<S>(net: &mut Net<CellData, S>, rl: &RaylibHandle) {
+    for (_, cell) in net.iter_mut() {
+        let x: i32 = rl.get_random_value(-10..=10);
+        let y: i32 = rl.get_random_value(-10..=10);
+        let r = Vector2::new(x as f32 / 10.0, y as f32 / 10.0);
 
-        let (cx, cy) = pos_to_cell(node.data.pos, s);
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                let Some(list) = grid.get(&(cx + dx, cy + dy)) else { continue };
-                for jd in list.clone() {
-                    if jd <= id { continue };
-                    let right = net.get_node_unchecked(jd).data;
-                    
-                    let diff = left.pos - right.pos;
-                    let len = diff.length();
-                    
-                    if len > s.min_dist {
-                        continue;
-                    }
-                    let f = s.force * (1.0 - len / s.min_dist);
-                    
-                    let dir = if len > 1e-4 {
-                        diff * (1.0/len)
-                    } else { 
-                        Vector2::one()
-                    };
-
-                    *forces.entry(id).or_default() += dir * f;
-                    *forces.entry(jd).or_default() -= dir * f;
-                }
-            }
-        }
-    }
-}
-
-fn calculate_edge_forces(
-    net: &InteractionNet<NodeData, SymbolData>,
-    s: &Settings,
-    forces: &mut HashMap<Nid, Vector2>,
-    torques: &mut HashMap<Nid, f32>
-) {
-    for (left, right) in net.iter_links() {
-        let [a, _, _, d] = link_offsets_unchecked(left, right, net, s);
-
-        let diff = a - d;
-        let len = diff.length();           
-        if len < 1e-4 { continue; }
-                    
-        let dir = diff * (1.0/len);
-        let mut f = s.force;
-
-        if left.port == 0 && right.port == 0 && s.reducing {
-            f /= 1.0;
-        } else {
-            f /= 4.0;
-        }
-
-        *forces.entry(left.node).or_default() -= dir * f;
-        *forces.entry(right.node).or_default() += dir * f;
-
-        let left_offset = net.get_node_unchecked(left.node).data.pos - a;
-        let right_offset = net.get_node_unchecked(right.node).data.pos - d;
-
-        let left_torque = cross_product(left_offset, dir * f) / 180.0;
-        let right_torque = cross_product(right_offset, dir * f) / 180.0;
-
-        *torques.entry(left.node).or_default() += left_torque;
-        *torques.entry(right.node).or_default() -= right_torque;
+        cell.data.pos += r;
     }
 }
